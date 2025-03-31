@@ -43,7 +43,7 @@ generate_plot_code <- function(prompt, df, llm) {
   
   response <- llm$chat(data_context)
   
-  # Remove markdown artifacts, newlines, tabs, etc.
+  #Remove markdown etc
   clean_code <- sanitize_code(response)
   
   clean_code

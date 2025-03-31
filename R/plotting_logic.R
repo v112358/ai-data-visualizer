@@ -24,7 +24,6 @@ validate_plot_code <- function(code) {
   # 2. Check that it references df (or doesn't try to use random objects)
   if (!grepl("ggplot\\s*\\(\\s*df", code)) {
     warning("The code does not appear to reference 'df' in ggplot(...)")
-    # It's up to you whether you want to fail here or allow it
   }
   
   # If all checks passed:
