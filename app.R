@@ -4,11 +4,12 @@ library(dplyr)
 library(ggplot2)
 library(glue)
 library(stringr)
-# If your LLM logic is in llm_helpers.R, you'd do:
+
+
 source("R/llm_helpers.R")
-llm <- create_llm_object()
-# This file contains generate_default_line_code, etc.
 source("R/default_graphs.R")
+llm <- create_llm_object()
+
 
 ui <- fluidPage(
   titlePanel("AI Data Visualizer"),
@@ -26,12 +27,9 @@ ui <- fluidPage(
     sidebarPanel(
       fileInput("file", "Upload CSV File", accept = ".csv"),
       actionButton("open_chart_modal", "Choose Chart Type"),
-      # The "Excel-like" panel with chart type buttons
-      # (You can replace [icon] with actual images or styling)
       h4("Choose your chart type"),
       
-      # ---- Default chart UI inputs (reactive) ----
-      # We reveal/hide them using conditionalPanel based on chartType
+      #Default chart UI inputs
       conditionalPanel(
         condition = "output.currentChartType == 'Line'",
         uiOutput("line_inputs")
@@ -50,7 +48,7 @@ ui <- fluidPage(
         uiOutput("hist_inputs")
       ),
       
-      # ---- "Other" mode: LLM-based workflow ----
+      #"Other" mode: LLM-based workflow
       conditionalPanel(
         condition = "output.currentChartType == 'Other'",
         textInput("prompt", "Describe your visualization", 
@@ -88,7 +86,8 @@ ui <- fluidPage(
 )
 
 server <- function(input, output, session) {
-  # ========== REACTIVE STATE FOR CHART TYPE ==========
+  
+  #REACTIVE STATE FOR CHART TYPE
   chartType <- reactiveVal(NULL)
   
   observeEvent(input$open_chart_modal, {
@@ -97,7 +96,7 @@ server <- function(input, output, session) {
         title = "Select a Chart Type",
         easyClose = TRUE,
         footer = NULL,
-        # We'll arrange clickable chart images in a fluidRow:
+        # Arrange clickable chart images in a fluidRow:
         fluidRow(
           # Each chart type as an actionButton with an image + label
           column(3,
@@ -143,10 +142,10 @@ server <- function(input, output, session) {
     )
   })
   
-  # 2) Observers for each chart type option:
+  # Observers for each chart type option:
   observeEvent(input$opt_line, {
     removeModal()
-    chartType("Line")  # same as old input$btn_line logic
+    chartType("Line") 
   })
   
   observeEvent(input$opt_scatter, {
@@ -175,7 +174,7 @@ server <- function(input, output, session) {
   })
   outputOptions(output, "currentChartType", suspendWhenHidden = FALSE)
   
-  # ========== READ THE CSV DATASET ==========
+  # READ THE CSV DATASET
   dataset <- reactive({
     req(input$file)
     read_csv(input$file$datapath)
@@ -186,7 +185,7 @@ server <- function(input, output, session) {
     head(dataset(), 5)
   })
   
-  # ========== DETERMINE NUMERIC VS. CATEGORICAL COLS ==========
+  #DETERMINE NUMERIC VS. CATEGORICAL COLS
   numericCols <- reactive({
     req(dataset())
     names(dataset())[sapply(dataset(), is.numeric)]
@@ -198,7 +197,7 @@ server <- function(input, output, session) {
     names(df)[sapply(df, function(x) is.character(x) || is.factor(x))]
   })
   
-  # ========== DYNAMIC UI FOR DEFAULT CHARTS ==========
+  #DYNAMIC UI FOR DEFAULT CHARTS
   output$line_inputs <- renderUI({
     req(numericCols())
     tagList(
@@ -250,15 +249,15 @@ server <- function(input, output, session) {
     undo_counter(0)
     feedback_history("")  # reset any old feedback from prior LLM session
   })
-  # ========== UNDO/REDO STATE FOR LLM (ONLY WHEN CHARTTYPE == 'Other') ==========
+  
+  # UNDO/REDO STATE FOR LLM (ONLY WHEN CHARTTYPE == 'Other') 
   feedback_history <- reactiveVal("")
   undo_stack <- reactiveVal(list())
   redo_stack <- reactiveVal(list())
   undo_counter <- reactiveVal(0)
   current_code <- reactiveVal("")  # store the "final" code to evaluate for the plot
-  # ^ We'll use this for LLM approach, or also set it if user picks a default chart
   
-  # ========== TIE THE DEFAULT CODE (NON-LLM) TO current_code() REACTIVELY ==========
+  # TIE THE DEFAULT CODE (NON-LLM) TO current_code() REACTIVELY
   observe({
     # If user is in "Other", we do nothing here (the LLM approach handles code).
     # If user picks a default chart (Line, Scatter, Bar, Hist), we generate code reactively.
@@ -297,31 +296,15 @@ server <- function(input, output, session) {
       new_code <- generate_default_hist_code(input$histCol)
     }
     
-    # Because we want immediate reactivity for default plots,
-    # we simply set current_code() to the new code each time.
-    # We won't push it to the undo stack unless the user is in "Other" mode.
     current_code(new_code)
   })
   
-  # ========== LLM FLOW (CHARTTYPE == 'Other') ==========
-  # We'll re-use your old logic. The user enters a prompt, hits "Generate",
+  # LLM FLOW (CHARTTYPE == 'Other') 
+  # 
   # or Tweak feedback, etc. Then the final code is stored in current_code().
   
   observeEvent(input$generate, {
     req(input$prompt, dataset())
-    # Fake call to LLM. In your real code, you'd do:
-    # df <- dataset()
-    # response <- llm$chat(...)
-    # Then clean_code ...
-    # For demonstration, let's pretend the LLM just returns a snippet:
-    
-    # The snippet below is from your old approach if you had:
-    #   col_info <- ...
-    #   sample_data <- ...
-    #   data_context <- ...
-    #   response <- chat$chat(data_context)
-    #   clean_code <- ...
-    # We'll skip those details, but let's do:
     
     new_code <- generate_plot_code(
       prompt = input$prompt,
@@ -376,7 +359,7 @@ server <- function(input, output, session) {
     }
   })
   
-  # ========== PLOT RENDERING ==========
+  # PLOT RENDERING
   output$plot <- renderPlot({
     req(dataset())
     code_to_run <- current_code()
@@ -397,7 +380,7 @@ server <- function(input, output, session) {
     }
   })
   
-  # ========== CODE DISPLAY ==========
+  # CODE DISPLAY 
   output$code_output <- renderText({
     current_code()
   })
