@@ -9,6 +9,7 @@ library(ellmer)
 
 source("R/llm_helpers.R")
 source("R/default_graphs.R")
+source("R/logging.R")
 
 llm <- create_llm_object()
 

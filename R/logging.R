@@ -11,5 +11,6 @@ log_to_gsheet <- function(event_type, details = "", user_id = Sys.getenv("SHINY_
     details = details,
     stringsAsFactors = FALSE
   )
-  sheets_append(ss = sheet_id, data = log_entry)
+  sheet_append(ss = sheet_id, data = log_entry)
 }
+
