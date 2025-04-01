@@ -90,6 +90,9 @@ ui <- fluidPage(
 
 server <- function(input, output, session) {
   
+  user_id <- paste0("session_", substr(session$token, 1, 8))
+  log_to_gsheet("session_start", "", user_id = user_id)
+  
   #REACTIVE STATE FOR CHART TYPE
   chartType <- reactiveVal(NULL)
   
