@@ -2,6 +2,7 @@
 
 library(testthat)
 library(here)
+library(ellmer)
 
 # Source your LLM logic file. 
 # Make sure "llm_logic.R" really exists in the "R" folder at your project root.
@@ -35,7 +36,6 @@ test_that("generate_plot_code() returns a non-empty string", {
 })
 
 test_that("refine_plot_code() modifies code based on feedback", {
-  skip("Uncomment once you have a working LLM + logic for refine_plot_code()")
   
   # 1) Some existing code
   current_code <- "ggplot(df, aes(x, y)) + geom_point()"
@@ -56,3 +56,28 @@ test_that("refine_plot_code() modifies code based on feedback", {
   expect_false(identical(refined, current_code)) # should differ
 })
 
+test_that("validate_plot_code() disallows malicious code", {
+  
+  # 1) Banned patterns
+  pattern_1 <- "ggplot(df, aes(x = var1, y = var2)) + geom_point()"
+  pattern_2 <- "system('ls'); ggplot(df, aes(x, y)) + geom_point()"
+  pattern_3 <- "library(tidyverse)"
+  pattern_4 <- "rm(df)"
+  pattern_5 <- "install.packages(tidyverse)"
+  pattern_6 <- "ggplot(data.frame(x = 1:5, y = 1:5), aes(x, y)) + geom_line()"
+  
+  result_1 <- validate_plot_code(pattern_1)
+  result_2 <- validate_plot_code(pattern_2)
+  result_3 <- validate_plot_code(pattern_3)
+  result_4 <- validate_plot_code(pattern_4)
+  result_5 <- validate_plot_code(pattern_5)
+  result_6 <- validate_plot_code(pattern_6)
+  
+  # 4) Check results
+  expect_true(result_1)
+  expect_false(result_2)
+  expect_false(result_3)
+  expect_false(result_4)
+  expect_false(result_5)
+  expect_true(result_6) 
+})

@@ -4,33 +4,35 @@ library(dplyr)
 library(ggplot2)
 library(glue)
 library(stringr)
+library(ellmer)
 
 
 source("R/llm_helpers.R")
 source("R/default_graphs.R")
-llm <- create_llm_object()
 
+llm <- create_llm_object()
 
 ui <- fluidPage(
   titlePanel("AI Data Visualizer"),
   
-  tags$head(
+  tags$head( ## head is for defining look behavior
     tags$style(HTML("
-    .chart-option:hover {
-      background-color: #f0f0f0; /* or darker color if you prefer */
+    .chart-option:hover { 
+      background-color: #f0f0f0; 
       cursor: pointer;
     }
   "))
-  ),
+  ), ##style for chart-option (will come up in a pop-up) to specify the hover behavior and background color change
   
   sidebarLayout(
     sidebarPanel(
       fileInput("file", "Upload CSV File", accept = ".csv"),
-      actionButton("open_chart_modal", "Choose Chart Type"),
-      h4("Choose your chart type"),
+      
+      uiOutput("toy_data_button"),
+      actionButton("open_chart_modal", "Choose Chart Type"), ## triggers the modal to show with all the graph options
       
       #Default chart UI inputs
-      conditionalPanel(
+      conditionalPanel( ## will only show when respective chart type is picked
         condition = "output.currentChartType == 'Line'",
         uiOutput("line_inputs")
       ),
@@ -40,7 +42,7 @@ ui <- fluidPage(
       ),
       conditionalPanel(
         condition = "output.currentChartType == 'Bar'",
-        checkboxInput("is_aggregated", "Use Aggregation?", FALSE),
+        checkboxInput("is_aggregated", "Use Aggregation?", FALSE), ## aggregation logic for barplots
         uiOutput("bar_inputs")
       ),
       conditionalPanel(
@@ -175,9 +177,41 @@ server <- function(input, output, session) {
   outputOptions(output, "currentChartType", suspendWhenHidden = FALSE)
   
   # READ THE CSV DATASET
+  
+  data_source <- reactiveVal("upload")
+  
+  observeEvent(input$use_toy_data, {
+    data_source("toy")
+    output$message_area <- renderUI({
+      span("Using toy data (iris).", style = "color: blue; font-weight: bold;")
+    })
+  })
+  
+  observeEvent(input$file, {
+    data_source("upload")
+    output$message_area <- renderUI({
+      span("Using uploaded file.", style = "color: green; font-weight: bold;")
+    })
+  })
+  
+  output$toy_data_button <- renderUI({
+    label <- if (data_source() == "toy") {
+      HTML('Try with toy data <span style="color: white; background-color: #28a745; border-radius: 6px; padding: 2px 6px; margin-left: 6px;">Active</span>')
+    } else {
+      "Try with toy data"
+    }
+    
+    actionButton("use_toy_data", label)
+  })
+  
   dataset <- reactive({
-    req(input$file)
-    read_csv(input$file$datapath)
+    if (data_source() == "toy") {
+      iris %>%
+        tibble::rownames_to_column(var = "index")
+    } else {
+      req(input$file)
+      readr::read_csv(input$file$datapath)
+    }
   })
   
   output$csv_preview <- renderTable({
@@ -197,11 +231,16 @@ server <- function(input, output, session) {
     names(df)[sapply(df, function(x) is.character(x) || is.factor(x))]
   })
   
+  dateCols <- reactive({
+    req(dataset())
+    names(df)[sapply(df, function(x) inherits(x, "Date") || inherits(x, "POSIXt"))]
+  })
+  
   #DYNAMIC UI FOR DEFAULT CHARTS
   output$line_inputs <- renderUI({
     req(numericCols())
     tagList(
-      selectInput("lineX", "X Axis (often numeric or date)", choices = numericCols()),
+      selectInput("lineX", "X Axis (often numeric or date)", choices = c(numericCols(),dateCols())),
       selectInput("lineY", "Y Axis (numeric)", choices = numericCols())
     )
   })
@@ -364,7 +403,9 @@ server <- function(input, output, session) {
     req(dataset())
     code_to_run <- current_code()
     if (is.null(code_to_run) || code_to_run == "") return(NULL)
-    
+    if (!validate_plot_code(code_to_run)) {
+      stop("Unsafe or invalid code detected. Please revise your input.")
+    }
     df <- dataset()
     expr <- try(parse(text = code_to_run), silent = TRUE)
     if (inherits(expr, "try-error")) {
