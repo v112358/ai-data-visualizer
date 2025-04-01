@@ -152,31 +152,31 @@ server <- function(input, output, session) {
   observeEvent(input$opt_line, {
     removeModal()
     chartType("Line") 
-    log_to_gsheet("chart_selected", "Line")
+    log_to_gsheet("chart_selected", "Line",user_id = user_id)
   })
   
   observeEvent(input$opt_scatter, {
     removeModal()
     chartType("Scatter")
-    log_to_gsheet("chart_selected", "Scatter")
+    log_to_gsheet("chart_selected", "Scatter",user_id = user_id)
   })
   
   observeEvent(input$opt_bar, {
     removeModal()
     chartType("Bar")
-    log_to_gsheet("chart_selected", "Bar")
+    log_to_gsheet("chart_selected", "Bar",user_id = user_id)
   })
   
   observeEvent(input$opt_hist, {
     removeModal()
     chartType("Hist")
-    log_to_gsheet("chart_selected", "Histogram")
+    log_to_gsheet("chart_selected", "Histogram",user_id = user_id)
   })
   
   observeEvent(input$opt_other, {
     removeModal()
     chartType("Other")
-    log_to_gsheet("chart_selected", "Other")
+    log_to_gsheet("chart_selected", "Other",user_id = user_id)
   })
   
   # Expose chartType to UI for conditionalPanel
@@ -194,7 +194,7 @@ server <- function(input, output, session) {
     output$message_area <- renderUI({
       span("Using toy data (iris).", style = "color: blue; font-weight: bold;")
     })
-    log_to_gsheet("data_source", "Toy data used")
+    log_to_gsheet("data_source", "Toy data used",user_id = user_id)
   })
   
   observeEvent(input$file, {
@@ -202,7 +202,7 @@ server <- function(input, output, session) {
     output$message_area <- renderUI({
       span("Using uploaded file.", style = "color: green; font-weight: bold;")
     })
-    log_to_gsheet("data_source", "Uploaded CSV")
+    log_to_gsheet("data_source", "Uploaded CSV",user_id = user_id)
   })
   
   output$toy_data_button <- renderUI({
@@ -361,8 +361,8 @@ server <- function(input, output, session) {
       df = dataset(),
       llm = llm
     )
-    log_to_gsheet("llm_generate", paste("Prompt:", input$prompt))
-    log_to_gsheet("llm_code_generated", new_code)
+    log_to_gsheet("llm_generate", paste("Prompt:", input$prompt),user_id = user_id)
+    log_to_gsheet("llm_code_generated", new_code,user_id = user_id)
     # Reset stacks
     undo_stack(list(new_code))
     redo_stack(list())
@@ -383,7 +383,7 @@ server <- function(input, output, session) {
       llm
     )
     
-    log_to_gsheet("llm_code_tweaked", refined_code)
+    log_to_gsheet("llm_code_tweaked", refined_code,user_id = user_id)
     new_stack <- c(list(refined_code), undo_stack())
     undo_stack(head(new_stack, 3))
     redo_stack(list())
