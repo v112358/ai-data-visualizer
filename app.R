@@ -14,75 +14,76 @@ source("R/logging.R")
 llm <- create_llm_object()
 
 ui <- fluidPage(
-  titlePanel("AI Data Visualizer"),
+  titlePanel(div(
+    style = "display: flex; align-items: center; gap: 10px;",
+    tags$img(src = "other_chart.png", height = "40px"),
+    h2("AI Data Visualizer", style = "margin: 0;")
+  )),
   
-  tags$head( ## head is for defining look behavior
-    tags$style(HTML("
-    .chart-option:hover { 
-      background-color: #f0f0f0; 
-      cursor: pointer;
+  tags$head(tags$style(HTML("      
+    body {
+      background-color: #f8f9fa;
     }
-  "))
-  ), ##style for chart-option (will come up in a pop-up) to specify the hover behavior and background color change
+    .chart-option:hover { 
+      background-color: #e2e6ea; 
+      cursor: pointer;
+      border-radius: 10px;
+    }
+    .chart-option img {
+      border-radius: 10px;
+    }
+    .well, .panel {
+      border-radius: 10px;
+    }
+    .btn-primary {
+      background-color: #007bff;
+      border-color: #007bff;
+    }
+    .btn-primary:hover {
+      background-color: #0056b3;
+      border-color: #004a9f;
+    }
+  "))),
   
   sidebarLayout(
     sidebarPanel(
+      style = "background-color: #ffffff; border-radius: 10px; box-shadow: 0px 2px 5px rgba(0,0,0,0.1);",
       fileInput("file", "Upload CSV File", accept = ".csv"),
-      
       uiOutput("toy_data_button"),
-      actionButton("open_chart_modal", "Choose Chart Type"), ## triggers the modal to show with all the graph options
+      tags$hr(),
+      actionButton("open_chart_modal", "Choose Chart Type", class = "btn btn-primary"),
+      tags$hr(),
       
-      #Default chart UI inputs
-      conditionalPanel( ## will only show when respective chart type is picked
-        condition = "output.currentChartType == 'Line'",
-        uiOutput("line_inputs")
-      ),
-      conditionalPanel(
-        condition = "output.currentChartType == 'Scatter'",
-        uiOutput("scatter_inputs")
-      ),
-      conditionalPanel(
-        condition = "output.currentChartType == 'Bar'",
-        checkboxInput("is_aggregated", "Use Aggregation?", FALSE), ## aggregation logic for barplots
-        uiOutput("bar_inputs")
-      ),
-      conditionalPanel(
-        condition = "output.currentChartType == 'Hist'",
-        uiOutput("hist_inputs")
+      conditionalPanel(condition = "output.currentChartType == 'Line'", uiOutput("line_inputs")),
+      conditionalPanel(condition = "output.currentChartType == 'Scatter'", uiOutput("scatter_inputs")),
+      conditionalPanel(condition = "output.currentChartType == 'Bar'", 
+                       checkboxInput("is_aggregated", "Use Aggregation?", FALSE),
+                       uiOutput("bar_inputs")),
+      conditionalPanel(condition = "output.currentChartType == 'Hist'", uiOutput("hist_inputs")),
+      
+      conditionalPanel(condition = "output.currentChartType == 'Other'",
+                       textInput("prompt", "Describe your visualization", placeholder = "e.g., Show a histogram of numeric columns"),
+                       actionButton("generate", "Generate", class = "btn btn-secondary"),
+                       tags$hr(),
+                       textInput("feedbackInput", "Tweak your graph", placeholder = "e.g., Change colors, add labels"),
+                       actionButton("update", "Tweak", class = "btn btn-secondary"),
+                       actionButton("undo", "Undo", class = "btn btn-outline-secondary"),
+                       actionButton("redo", "Redo", class = "btn btn-outline-secondary"),
+                       tags$hr(),
+                       h5("Undo Counter:"),
+                       textOutput("undo_counter"),
+                       h5("Previous Feedback"),
+                       verbatimTextOutput("feedback_history")
       ),
       
-      #"Other" mode: LLM-based workflow
-      conditionalPanel(
-        condition = "output.currentChartType == 'Other'",
-        textInput("prompt", "Describe your visualization", 
-                  placeholder = "e.g., Show a histogram of numeric columns"),
-        actionButton("generate", "Generate"),
-        
-        textAreaInput("feedbackInput", "Tweak your graph", placeholder = "e.g., Change colors, add labels"),
-        actionButton("update", "Tweak"),
-        br(),
-        actionButton("undo", "Undo"),
-        actionButton("redo", "Redo"),
-        h4("Undo Counter:"),
-        textOutput("undo_counter"),
-        h4("Previous Feedback"),
-        verbatimTextOutput("feedback_history")
-      ),
-      conditionalPanel(
-        condition = "output.currentChartType != 'Other' && output.currentChartType != ''",
-        actionButton("refineAI", "Refine with AI")
-      )
+      conditionalPanel(condition = "output.currentChartType != 'Other' && output.currentChartType != ''",
+                       actionButton("refineAI", "Refine with AI", class = "btn btn-warning"))
     ),
     
     mainPanel(
       tabsetPanel(
-        tabPanel("Graph",
-                 plotOutput("plot"),
-                 verbatimTextOutput("code_output")
-        ),
-        tabPanel("CSV Preview",
-                 tableOutput("csv_preview")
-        )
+        tabPanel("Graph", div(style = "padding-top: 10px;", plotOutput("plot")), tags$hr(), verbatimTextOutput("code_output")),
+        tabPanel("CSV Preview", tableOutput("csv_preview"))
       )
     )
   )
@@ -382,13 +383,14 @@ server <- function(input, output, session) {
       input$feedbackInput,
       llm
     )
-    
+    log_to_gsheet("llm_code_tweak_prmpted", paste("Prompt:", input$feedbackInput),user_id = user_id)
     log_to_gsheet("llm_code_tweaked", refined_code,user_id = user_id)
     new_stack <- c(list(refined_code), undo_stack())
     undo_stack(head(new_stack, 3))
     redo_stack(list())
     undo_counter(length(undo_stack()) - 1)
     current_code(refined_code)
+    updateTextAreaInput(session, "feedbackInput", value = "")
   })
   
   observeEvent(input$undo, {

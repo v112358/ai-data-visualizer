@@ -1,7 +1,7 @@
 library(googlesheets4)
 library(here)
 
-gs4_auth(path = here("keys/data-visualizer-logging.json"))  # authenticate with service account
+gs4_auth(path = here("keys","data-visualizer-logging.json"))  # authenticate with service account
 sheet_id <- "1q7TG7OIs7goq8ul2rhxUjT6kEi5st3b2KiQMjXY0YCc"
 
 log_to_gsheet <- function(event_type, details = "", user_id = Sys.getenv("SHINY_USER", unset = "anon")) {
