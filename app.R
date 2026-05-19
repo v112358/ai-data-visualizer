@@ -6,447 +6,679 @@ library(glue)
 library(stringr)
 library(ellmer)
 library(here)
+library(tibble)
 
+source("R/semantic_state.R")
 source("R/llm_helpers.R")
-source("R/default_graphs.R")
 source("R/logging.R")
 
 llm <- create_llm_object()
 
+# ── UI ─────────────────────────────────────────────────────────────────────
+
 ui <- fluidPage(
-  titlePanel(div(
-    style = "display: flex; align-items: center; gap: 10px;",
-    tags$img(src = "other_chart.png", height = "40px"),
-    h2("AI Data Visualizer", style = "margin: 0;")
-  )),
-  
-  tags$head(tags$style(HTML("      
-    body {
-      background-color: #f8f9fa;
-    }
-    .chart-option:hover { 
-      background-color: #e2e6ea; 
-      cursor: pointer;
-      border-radius: 10px;
-    }
-    .chart-option img {
-      border-radius: 10px;
-    }
-    .well, .panel {
-      border-radius: 10px;
-    }
-    .btn-primary {
-      background-color: #007bff;
-      border-color: #007bff;
-    }
-    .btn-primary:hover {
-      background-color: #0056b3;
-      border-color: #004a9f;
-    }
+  title = "Chart Studio",
+
+  tags$head(tags$style(HTML("
+    * { box-sizing: border-box; }
+    body { background: #f0f2f5; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; }
+    .app-header { background: #1a1a2e; color: #fff; padding: 10px 20px; display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+    .app-header h4 { margin: 0; font-size: 16px; font-weight: 600; }
+    .app-header .subtitle { font-size: 12px; color: #8888aa; margin-left: 4px; }
+    .panel-card { background: #fff; border-radius: 10px; padding: 14px; box-shadow: 0 1px 6px rgba(0,0,0,0.08); }
+    .chart-canvas { background: #fff; border-radius: 10px; padding: 16px 16px 10px; box-shadow: 0 1px 6px rgba(0,0,0,0.08); }
+    .panel-label { font-size: 11px; font-weight: 600; color: #6c757d; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 8px; margin-top: 6px; }
+    .status-bar { font-size: 11px; color: #6c757d; margin-top: 6px; min-height: 16px; }
+    .ctrl-row { margin-bottom: 8px; }
+    .ctrl-row label { font-size: 12px !important; font-weight: 500; color: #343a40; }
+    .undo-row { display: flex; gap: 6px; margin-top: 8px; }
+    .ai-history { max-height: 200px; overflow-y: auto; margin-top: 8px; }
+    .ai-item { background: #f8f9fa; border-left: 3px solid #3a86ff; border-radius: 0 4px 4px 0; padding: 6px 8px; margin-bottom: 6px; font-size: 11px; color: #495057; }
+    hr.thin { margin: 10px 0; border-color: #f0f0f0; }
+    .form-control, .selectize-input { font-size: 13px !important; }
+    .btn { font-size: 12px; }
+    .shiny-input-container { margin-bottom: 6px; }
+    .shiny-input-container label { font-size: 12px !important; font-weight: 500; color: #343a40; }
+    input[type='color'] { width: 100%; height: 36px; border-radius: 6px; border: 1px solid #dee2e6; cursor: pointer; padding: 2px 4px; }
   "))),
-  
-  sidebarLayout(
-    sidebarPanel(
-      style = "background-color: #ffffff; border-radius: 10px; box-shadow: 0px 2px 5px rgba(0,0,0,0.1);",
-      fileInput("file", "Upload CSV File", accept = ".csv"),
-      uiOutput("toy_data_button"),
-      tags$hr(),
-      actionButton("open_chart_modal", "Choose Chart Type", class = "btn btn-primary"),
-      tags$hr(),
-      
-      conditionalPanel(condition = "output.currentChartType == 'Line'", uiOutput("line_inputs")),
-      conditionalPanel(condition = "output.currentChartType == 'Scatter'", uiOutput("scatter_inputs")),
-      conditionalPanel(condition = "output.currentChartType == 'Bar'", 
-                       checkboxInput("is_aggregated", "Use Aggregation?", FALSE),
-                       uiOutput("bar_inputs")),
-      conditionalPanel(condition = "output.currentChartType == 'Hist'", uiOutput("hist_inputs")),
-      
-      conditionalPanel(condition = "output.currentChartType == 'Other'",
-                       textInput("prompt", "Describe your visualization", placeholder = "e.g., Show a histogram of numeric columns"),
-                       actionButton("generate", "Generate", class = "btn btn-secondary"),
-                       tags$hr(),
-                       textInput("feedbackInput", "Tweak your graph", placeholder = "e.g., Change colors, add labels"),
-                       actionButton("update", "Tweak", class = "btn btn-secondary"),
-                       actionButton("undo", "Undo", class = "btn btn-outline-secondary"),
-                       actionButton("redo", "Redo", class = "btn btn-outline-secondary"),
-                       tags$hr(),
-                       h5("Undo Counter:"),
-                       textOutput("undo_counter"),
-                       h5("Previous Feedback"),
-                       verbatimTextOutput("feedback_history")
-      ),
-      
-      conditionalPanel(condition = "output.currentChartType != 'Other' && output.currentChartType != ''",
-                       actionButton("refineAI", "Refine with AI", class = "btn btn-warning"))
+
+  tags$script(HTML("
+    window.paletteSwatches = {
+      'default': ['#F8766D','#00BA38','#619CFF'],
+      'Set1':    ['#E41A1C','#377EB8','#4DAF4A','#984EA3','#FF7F00'],
+      'Set2':    ['#66C2A5','#FC8D62','#8DA0CB','#E78AC3','#A6D854'],
+      'Dark2':   ['#1B9E77','#D95F02','#7570B3','#E7298A','#66A61E'],
+      'Paired':  ['#A6CEE3','#1F78B4','#B2DF8A','#33A02C','#FB9A99'],
+      'viridis': ['#440154','#31688E','#35B779','#FDE725'],
+      'plasma':  ['#0D0887','#7E03A8','#CC4678','#F89441','#F0F921'],
+      'okabe':   ['#E69F00','#56B4E9','#009E73','#F0E442','#0072B2','#D55E00','#CC79A7']
+    };
+    document.addEventListener('DOMContentLoaded', function() {
+      var el = document.getElementById('lineColor');
+      if (el) el.addEventListener('input', function() {
+        Shiny.setInputValue('lineColor', this.value);
+      });
+    });
+    Shiny.addCustomMessageHandler('updateColorInput', function(msg) {
+      var el = document.getElementById(msg.id);
+      if (el) { el.value = msg.value; Shiny.setInputValue(msg.id, msg.value); }
+    });
+  ")),
+
+  div(class = "app-header",
+    tags$svg(xmlns="http://www.w3.org/2000/svg", width="20", height="20", viewBox="0 0 24 24",
+             fill="none", stroke="#3a86ff", `stroke-width`="2",
+             tags$polyline(points="22 12 18 12 15 21 9 3 6 12 2 12")),
+    h4("Chart Studio"),
+    span(class = "subtitle", "AI-Assisted Graph Editor")
+  ),
+
+  fluidRow(style = "margin: 0 8px;",
+
+    # ── Left: Data + chart type panel ────────────────────────────────────
+    column(2, style = "padding: 0 6px;",
+      div(class = "panel-card",
+
+        div(class = "panel-label", "Chart Type"),
+        div(class = "ctrl-row",
+          selectInput("chartType", NULL,
+                      choices = c("Line", "Scatter", "Bar", "Histogram"),
+                      selected = "Line")
+        ),
+
+        hr(class = "thin"),
+        div(class = "panel-label", "Data"),
+        fileInput("file", NULL, accept = ".csv", buttonLabel = "Browse"),
+        actionButton("useToyData", "Use iris sample",
+                     class = "btn btn-outline-secondary btn-sm",
+                     style = "width:100%; margin-bottom:10px;"),
+
+        hr(class = "thin"),
+        div(class = "panel-label", "Columns"),
+        uiOutput("col_selectors")
+      )
     ),
-    
-    mainPanel(
-      tabsetPanel(
-        tabPanel("Graph", div(style = "padding-top: 10px;", plotOutput("plot")), tags$hr(), verbatimTextOutput("code_output")),
-        tabPanel("CSV Preview", tableOutput("csv_preview"))
+
+    # ── Center: Chart canvas ──────────────────────────────────────────────
+    column(7, style = "padding: 0 6px;",
+      div(class = "chart-canvas",
+        plotOutput("plot", height = "470px"),
+        div(class = "undo-row",
+          actionButton("undoBtn", "↩ Undo", class = "btn btn-outline-secondary btn-sm"),
+          actionButton("redoBtn", "↪ Redo", class = "btn btn-outline-secondary btn-sm")
+        ),
+        div(class = "status-bar", textOutput("statusMsg", inline = TRUE))
+      )
+    ),
+
+    # ── Right: Edit panel ─────────────────────────────────────────────────
+    column(3, style = "padding: 0 6px;",
+      div(class = "panel-card", style = "padding: 10px;",
+        tabsetPanel(id = "editTabs", type = "tabs",
+
+          # ── Style tab ────────────────────────────────────────────────────
+          tabPanel("Style",
+            div(style = "padding-top: 10px;",
+
+              # Color — single picker when ungrouped, palette selector when grouped
+              div(class = "panel-label", "Color"),
+              conditionalPanel(
+                "!input.colorBy || input.colorBy === '__none__' || input.chartType === 'Histogram'",
+                div(class = "ctrl-row",
+                  tags$label("Fill / Line color",
+                    style = "font-size:12px; font-weight:500; color:#343a40; display:block; margin-bottom:4px;"),
+                  tags$input(id = "lineColor", type = "color", value = "#3a86ff")
+                )
+              ),
+              conditionalPanel(
+                "input.colorBy && input.colorBy !== '__none__' && input.chartType !== 'Histogram'",
+                div(class = "ctrl-row",
+                  selectizeInput("colorPalette", "Color palette",
+                    choices = c(
+                      "ggplot2 default"             = "default",
+                      "ColorBrewer: Set1"           = "Set1",
+                      "ColorBrewer: Set2"           = "Set2",
+                      "ColorBrewer: Dark2"          = "Dark2",
+                      "ColorBrewer: Paired"         = "Paired",
+                      "Viridis"                     = "viridis",
+                      "Plasma"                      = "plasma",
+                      "Okabe-Ito (colorblind-safe)" = "okabe"
+                    ),
+                    selected = "default",
+                    options = list(render = I('{
+                      option: function(item, escape) {
+                        var sw = (window.paletteSwatches[item.value] || []).map(function(c) {
+                          return "<span style=\'display:inline-block;width:11px;height:11px;border-radius:2px;margin-right:2px;vertical-align:middle;background:" + c + "\'></span>";
+                        }).join("");
+                        return "<div style=\'padding:3px 6px\'>" + sw + " <span style=\'vertical-align:middle\'>" + escape(item.label) + "</span></div>";
+                      },
+                      item: function(item, escape) {
+                        var sw = (window.paletteSwatches[item.value] || []).map(function(c) {
+                          return "<span style=\'display:inline-block;width:11px;height:11px;border-radius:2px;margin-right:2px;vertical-align:middle;background:" + c + "\'></span>";
+                        }).join("");
+                        return "<div>" + sw + " " + escape(item.label) + "</div>";
+                      }
+                    }'))
+                  )
+                )
+              ),
+
+              hr(class = "thin"),
+
+              # Line-specific
+              conditionalPanel("input.chartType == 'Line'",
+                div(class = "panel-label", "Line"),
+                div(class = "ctrl-row",
+                  sliderInput("lineWidth", "Width", 0.3, 4, 1.0, 0.1, ticks = FALSE)
+                ),
+                hr(class = "thin"),
+                div(class = "panel-label", "Points"),
+                div(class = "ctrl-row",
+                  checkboxInput("showPoints", "Show data points", FALSE)
+                ),
+                conditionalPanel("input.showPoints == true",
+                  div(class = "ctrl-row",
+                    sliderInput("linePointSize", "Point size", 0.5, 6, 2.5, 0.5, ticks = FALSE)
+                  )
+                )
+              ),
+
+              # Scatter-specific
+              conditionalPanel("input.chartType == 'Scatter'",
+                div(class = "panel-label", "Points"),
+                div(class = "ctrl-row",
+                  sliderInput("scatterPointSize", "Size",    0.5, 8,   2.5, 0.5,  ticks = FALSE)
+                ),
+                div(class = "ctrl-row",
+                  sliderInput("pointAlpha",       "Opacity", 0.05, 1.0, 0.7, 0.05, ticks = FALSE)
+                ),
+                div(class = "ctrl-row",
+                  selectInput("pointShape", "Shape",
+                              choices = c("● Filled circle" = 16, "○ Open circle" = 1,
+                                          "■ Filled square" = 15, "▲ Triangle" = 17,
+                                          "◆ Diamond" = 18),
+                              selected = 16)
+                )
+              ),
+
+              # Bar-specific
+              conditionalPanel("input.chartType == 'Bar'",
+                div(class = "panel-label", "Bars"),
+                div(class = "ctrl-row",
+                  sliderInput("barWidth", "Bar width", 0.1, 1.0, 0.7, 0.05, ticks = FALSE)
+                ),
+                div(class = "ctrl-row",
+                  selectInput("barPosition", "Grouped position",
+                              choices = c("Side by side" = "dodge",
+                                          "Stacked"      = "stack",
+                                          "Proportional" = "fill"),
+                              selected = "dodge")
+                )
+              ),
+
+              # Histogram-specific
+              conditionalPanel("input.chartType == 'Histogram'",
+                div(class = "panel-label", "Bins"),
+                div(class = "ctrl-row",
+                  sliderInput("histBins", "Number of bins", 5, 100, 30, 1, ticks = FALSE)
+                )
+              ),
+
+              # Trend line — Line and Scatter only
+              conditionalPanel("input.chartType == 'Line' || input.chartType == 'Scatter'",
+                hr(class = "thin"),
+                div(class = "panel-label", "Trend Line"),
+                div(class = "ctrl-row",
+                  checkboxInput("addSmooth", "Add trend line", FALSE)
+                ),
+                conditionalPanel("input.addSmooth == true",
+                  div(class = "ctrl-row",
+                    selectInput("smoothMethod", "Method",
+                                choices = c("loess", "lm", "gam"), selected = "loess")
+                  )
+                )
+              ),
+
+              hr(class = "thin"),
+              div(class = "panel-label", "Theme"),
+              div(class = "ctrl-row",
+                selectInput("chartTheme", NULL,
+                            choices = c("Minimal" = "minimal", "Classic" = "classic",
+                                        "Black & White" = "bw", "Light" = "light",
+                                        "Dark" = "dark"),
+                            selected = "minimal")
+              ),
+              div(class = "ctrl-row",
+                selectInput("legendPos", "Legend",
+                            choices = c("Right" = "right", "Bottom" = "bottom",
+                                        "Left" = "left", "Top" = "top", "None" = "none"),
+                            selected = "right")
+              ),
+              div(class = "ctrl-row",
+                checkboxInput("showGridlines", "Show gridlines", TRUE)
+              )
+            )
+          ),
+
+          # ── Labels tab ───────────────────────────────────────────────────
+          tabPanel("Labels",
+            div(style = "padding-top: 10px;",
+              div(class = "panel-label", "Text"),
+              div(class = "ctrl-row", textInput("chartTitle", "Title",  value = "")),
+              div(class = "ctrl-row", textInput("xLabel",     "X axis", value = "")),
+              div(class = "ctrl-row", textInput("yLabel",     "Y axis", value = "")),
+              hr(class = "thin"),
+              div(class = "panel-label", "Sizes"),
+              div(class = "ctrl-row",
+                sliderInput("titleSize",    "Title",     8, 24, 14, 1, ticks = FALSE)
+              ),
+              div(class = "ctrl-row",
+                sliderInput("axisTextSize", "Axis text", 6, 18, 11, 1, ticks = FALSE)
+              )
+            )
+          ),
+
+          # ── AI Edit tab ──────────────────────────────────────────────────
+          tabPanel("AI Edit",
+            div(style = "padding-top: 10px;",
+              div(class = "panel-label", "Natural Language Edit"),
+              textAreaInput("aiRequest", NULL,
+                            placeholder = "e.g., use a dark theme, add a trend line, flip the axes, color bars by Species",
+                            height = "90px"),
+              actionButton("applyAI", "Apply", class = "btn btn-primary btn-sm",
+                           style = "width: 100%;"),
+              hr(class = "thin"),
+              div(class = "panel-label", "Edit History"),
+              div(class = "ai-history", uiOutput("aiHistory"))
+            )
+          )
+        )
       )
     )
   )
 )
 
+
+# ── Server ─────────────────────────────────────────────────────────────────
+
 server <- function(input, output, session) {
-  
+
   user_id <- paste0("session_", substr(session$token, 1, 8))
   log_to_gsheet("session_start", "", user_id = user_id)
-  
-  #REACTIVE STATE FOR CHART TYPE
-  chartType <- reactiveVal(NULL)
-  
-  observeEvent(input$open_chart_modal, {
-    showModal(
-      modalDialog(
-        title = "Select a Chart Type",
-        easyClose = TRUE,
-        footer = NULL,
-        # Arrange clickable chart images in a fluidRow:
-        fluidRow(
-          # Each chart type as an actionButton with an image + label
-          column(3,
-                 actionButton("opt_line", label = div(
-                   class = "chart-option",
-                   tags$img(src = "line_chart.png", width = "100%", style="border:1px solid #ccc;"),
-                   tags$p("Line Plot", style="text-align: center; margin-top: 5px;")
-                 ), style = "border:none;background:none;padding:0; width:100%")
-          ),
-          column(3,
-                 actionButton("opt_scatter", label = div(
-                   class = "chart-option",
-                   tags$img(src = "scatter_chart.png", width = "100%", style="border:1px solid #ccc;"),
-                   tags$p("Scatter Plot", style="text-align: center; margin-top: 5px;")
-                 ), style = "border:none;background:none;padding:0; width:100%")
-          ),
-          column(3,
-                 actionButton("opt_bar", label = div(
-                   class = "chart-option",
-                   tags$img(src = "bar_chart.png", width = "100%", style="border:1px solid #ccc;"),
-                   tags$p("Bar Chart", style="text-align: center; margin-top: 5px;")
-                 ), style = "border:none;background:none;padding:0; width:100%")
-          ),
-          column(3,
-                 actionButton("opt_hist", label = div(
-                   class = "chart-option",
-                   tags$img(src = "hist_chart.png", width = "100%", style="border:1px solid #ccc;"),
-                   tags$p("Histogram", style="text-align: center; margin-top: 5px;")
-                 ), style = "border:none;background:none;padding:0; width:100%")
-          )
-        ),
-        br(),
-        fluidRow(
-          column(3,
-                 actionButton("opt_other", label = div(
-                   class = "chart-option",
-                   tags$img(src = "other_chart.png", width = "100%", style="border:1px solid #ccc;"),
-                   tags$p("Other (AI Mode)", style="text-align: center; margin-top: 5px;")
-                 ), style = "border:none;background:none;padding:0; width:100%")
-          )
-        )
-      )
-    )
-  })
-  
-  # Observers for each chart type option:
-  observeEvent(input$opt_line, {
-    removeModal()
-    chartType("Line") 
-    log_to_gsheet("chart_selected", "Line",user_id = user_id)
-  })
-  
-  observeEvent(input$opt_scatter, {
-    removeModal()
-    chartType("Scatter")
-    log_to_gsheet("chart_selected", "Scatter",user_id = user_id)
-  })
-  
-  observeEvent(input$opt_bar, {
-    removeModal()
-    chartType("Bar")
-    log_to_gsheet("chart_selected", "Bar",user_id = user_id)
-  })
-  
-  observeEvent(input$opt_hist, {
-    removeModal()
-    chartType("Hist")
-    log_to_gsheet("chart_selected", "Histogram",user_id = user_id)
-  })
-  
-  observeEvent(input$opt_other, {
-    removeModal()
-    chartType("Other")
-    log_to_gsheet("chart_selected", "Other",user_id = user_id)
-  })
-  
-  # Expose chartType to UI for conditionalPanel
-  output$currentChartType <- reactive({
-    chartType() %||% ""
-  })
-  outputOptions(output, "currentChartType", suspendWhenHidden = FALSE)
-  
-  # READ THE CSV DATASET
-  
-  data_source <- reactiveVal("upload")
-  
-  observeEvent(input$use_toy_data, {
-    data_source("toy")
-    output$message_area <- renderUI({
-      span("Using toy data (iris).", style = "color: blue; font-weight: bold;")
-    })
-    log_to_gsheet("data_source", "Toy data used",user_id = user_id)
-  })
-  
-  observeEvent(input$file, {
-    data_source("upload")
-    output$message_area <- renderUI({
-      span("Using uploaded file.", style = "color: green; font-weight: bold;")
-    })
-    log_to_gsheet("data_source", "Uploaded CSV",user_id = user_id)
-  })
-  
-  output$toy_data_button <- renderUI({
-    label <- if (data_source() == "toy") {
-      HTML('Try with toy data <span style="color: white; background-color: #28a745; border-radius: 6px; padding: 2px 6px; margin-left: 6px;">Active</span>')
-    } else {
-      "Try with toy data"
-    }
-    
-    actionButton("use_toy_data", label)
-  })
-  
+
+  current_code <- reactiveVal("")
+  undo_stack   <- reactiveVal(list())
+  redo_stack   <- reactiveVal(list())
+  ai_history   <- reactiveVal(list())
+  status_text  <- reactiveVal("")
+  data_source  <- reactiveVal("upload")
+
+  # ── Dataset ─────────────────────────────────────────────────────────────
+  observeEvent(input$useToyData, { data_source("toy");    log_to_gsheet("data_source", "toy",    user_id) })
+  observeEvent(input$file,       { data_source("upload"); log_to_gsheet("data_source", "upload", user_id) })
+
   dataset <- reactive({
-    if (data_source() == "toy") {
-      iris %>%
-        tibble::rownames_to_column(var = "index")
-    } else {
-      req(input$file)
-      readr::read_csv(input$file$datapath)
-    }
+    if (data_source() == "toy")
+      iris %>% rownames_to_column("index") %>% mutate(index = as.numeric(index))
+    else { req(input$file); readr::read_csv(input$file$datapath, show_col_types = FALSE) }
   })
-  
-  output$csv_preview <- renderTable({
-    req(dataset())
-    head(dataset(), 5)
-  })
-  
-  #DETERMINE NUMERIC VS. CATEGORICAL COLS
+
   numericCols <- reactive({
-    req(dataset())
-    names(dataset())[sapply(dataset(), is.numeric)]
+    req(dataset()); names(dataset())[sapply(dataset(), is.numeric)]
   })
-  
   categoricalCols <- reactive({
     req(dataset())
-    df <- dataset()
-    names(df)[sapply(df, function(x) is.character(x) || is.factor(x))]
+    names(dataset())[sapply(dataset(), function(x) is.character(x) || is.factor(x))]
   })
-  
-  dateCols <- reactive({
-    req(dataset())
-    names(df)[sapply(df, function(x) inherits(x, "Date") || inherits(x, "POSIXt"))]
-  })
-  
-  #DYNAMIC UI FOR DEFAULT CHARTS
-  output$line_inputs <- renderUI({
+
+  # ── Column selectors (chart-type aware) ──────────────────────────────────
+  output$col_selectors <- renderUI({
     req(numericCols())
-    tagList(
-      selectInput("lineX", "X Axis (often numeric or date)", choices = c(numericCols(),dateCols())),
-      selectInput("lineY", "Y Axis (numeric)", choices = numericCols())
-    )
-  })
-  
-  output$scatter_inputs <- renderUI({
-    req(numericCols())
-    tagList(
-      selectInput("scatterX", "X (numeric)", choices = numericCols()),
-      selectInput("scatterY", "Y (numeric)", choices = numericCols())
-    )
-  })
-  
-  output$bar_inputs <- renderUI({
-    if (!input$is_aggregated) {
-      # Non-aggregated
+    nc <- numericCols()
+    cc <- categoricalCols()
+    ct <- input$chartType %||% "Line"
+
+    if (ct %in% c("Line", "Scatter")) {
       tagList(
-        selectInput("barX", "X (categorical)", choices = categoricalCols()),
-        selectInput("barY", "Y (numeric)", choices = numericCols())
+        selectInput("lineX",   "X axis",            choices = nc, selected = nc[1]),
+        selectInput("lineY",   "Y axis",             choices = nc, selected = nc[min(2, length(nc))]),
+        selectInput("colorBy", "Color by (group)",   choices = c("None" = "__none__", cc), selected = "__none__")
       )
-    } else {
-      # Aggregated
-      tagList(
-        selectInput("barAggCat", "Categorical Column", choices = categoricalCols()),
-        selectInput("barAggNum", "Numeric Column", choices = numericCols()),
-        selectInput("barAggFn", "Aggregation Function",
-                    choices = c("sum", "mean", "count", "max", "min"), 
-                    selected = "sum")
-      )
-    }
-  })
-  
-  output$hist_inputs <- renderUI({
-    req(numericCols())
-    selectInput("histCol", "Histogram Column", choices = numericCols())
-  })
-  observeEvent(input$refineAI, {
-    req(current_code())  # We need some code from the default chart
-    
-    # Switch to 'Other' mode
-    chartType("Other")
-    
-    # Initialize the LLM stack with the existing code
-    undo_stack(list(current_code()))
-    redo_stack(list())
-    undo_counter(0)
-    feedback_history("")  # reset any old feedback from prior LLM session
-  })
-  
-  # UNDO/REDO STATE FOR LLM (ONLY WHEN CHARTTYPE == 'Other') 
-  feedback_history <- reactiveVal("")
-  undo_stack <- reactiveVal(list())
-  redo_stack <- reactiveVal(list())
-  undo_counter <- reactiveVal(0)
-  current_code <- reactiveVal("")  # store the "final" code to evaluate for the plot
-  
-  # TIE THE DEFAULT CODE (NON-LLM) TO current_code() REACTIVELY
-  observe({
-    # If user is in "Other", we do nothing here (the LLM approach handles code).
-    # If user picks a default chart (Line, Scatter, Bar, Hist), we generate code reactively.
-    req(dataset())
-    ct <- chartType()
-    if (is.null(ct) || ct == "Other") {
-      return(NULL)
-    }
-    
-    # Build code from default_graphs.R
-    # We'll handle each chart type. If the user changes any input, this triggers.
-    new_code <- NULL
-    
-    if (ct == "Line") {
-      req(input$lineX, input$lineY)
-      new_code <- generate_default_line_code(input$lineX, input$lineY)
-      
-    } else if (ct == "Scatter") {
-      req(input$scatterX, input$scatterY)
-      new_code <- generate_default_scatter_code(input$scatterX, input$scatterY)
-      
     } else if (ct == "Bar") {
-      if (!input$is_aggregated) {
-        req(input$barX, input$barY)
-        new_code <- generate_default_bar_code(input$barX, input$barY)
-      } else {
-        req(input$barAggCat, input$barAggFn)
-        new_code <- generate_default_agg_bar_code(
-          cat_col = input$barAggCat,
-          num_col = input$barAggNum,
-          agg_fn  = input$barAggFn
-        )
-      }
-    } else if (ct == "Hist") {
-      req(input$histCol)
-      new_code <- generate_default_hist_code(input$histCol)
+      x_choices <- if (length(cc) > 0) c(cc, nc) else nc   # prefer categorical
+      tagList(
+        selectInput("lineX",   "X axis (category)",  choices = x_choices, selected = x_choices[1]),
+        selectInput("lineY",   "Y axis (numeric)",   choices = nc, selected = nc[1]),
+        selectInput("colorBy", "Color by (group)",   choices = c("None" = "__none__", cc), selected = "__none__")
+      )
+    } else {  # Histogram
+      tagList(
+        selectInput("lineX", "Column", choices = nc, selected = nc[1])
+      )
     }
-    
-    current_code(new_code)
   })
-  
-  # LLM FLOW (CHARTTYPE == 'Other') 
-  # 
-  # or Tweak feedback, etc. Then the final code is stored in current_code().
-  
-  observeEvent(input$generate, {
-    req(input$prompt, dataset())
-    
-    new_code <- generate_plot_code(
-      prompt = input$prompt,
-      df = dataset(),
-      llm = llm
-    )
-    log_to_gsheet("llm_generate", paste("Prompt:", input$prompt),user_id = user_id)
-    log_to_gsheet("llm_code_generated", new_code,user_id = user_id)
-    # Reset stacks
-    undo_stack(list(new_code))
+
+  # ── Helpers ──────────────────────────────────────────────────────────────
+
+  push_undo <- function(code) {
+    if (!nzchar(code)) return()
+    undo_stack(head(c(list(code), undo_stack()), 20))
     redo_stack(list())
-    undo_counter(0)
-    feedback_history("")
-    current_code(new_code)
-  })
-  
-  observeEvent(input$update, {
-    req(input$feedbackInput, current_code())
-    
-    updated_feedback <- paste(feedback_history(), input$feedbackInput, sep="\n")
-    feedback_history(updated_feedback)
-    
-    refined_code <- refine_plot_code(
-      current_code(),
-      input$feedbackInput,
-      llm
+  }
+
+  sync_ui_from_code <- function(code) {
+    v <- extract_ui_values(code)
+    if (!is.null(v$line_color))     session$sendCustomMessage("updateColorInput", list(id = "lineColor", value = v$line_color))
+    if (!is.null(v$line_width))     updateSliderInput(session,   "lineWidth",        value = v$line_width)
+    if (!is.null(v$show_points))    updateCheckboxInput(session, "showPoints",       value = v$show_points)
+    if (!is.null(v$point_size))     updateSliderInput(session,   "linePointSize",    value = v$point_size)
+    if (!is.null(v$point_size))     updateSliderInput(session,   "scatterPointSize", value = v$point_size)
+    if (!is.null(v$point_alpha))    updateSliderInput(session,   "pointAlpha",       value = v$point_alpha)
+    if (!is.null(v$point_shape))    updateSelectInput(session,   "pointShape",       selected = as.character(v$point_shape))
+    if (!is.null(v$bar_width))      updateSliderInput(session,   "barWidth",         value = v$bar_width)
+    if (!is.null(v$bar_position))   updateSelectInput(session,   "barPosition",      selected = v$bar_position)
+    if (!is.null(v$bins))           updateSliderInput(session,   "histBins",         value = v$bins)
+    if (!is.null(v$smooth))         updateCheckboxInput(session, "addSmooth",        value = v$smooth)
+    if (!is.null(v$smooth_method))  updateSelectInput(session,   "smoothMethod",     selected = v$smooth_method)
+    if (!is.null(v$theme))          updateSelectInput(session,   "chartTheme",       selected = v$theme)
+    if (!is.null(v$legend_pos))     updateSelectInput(session,   "legendPos",        selected = v$legend_pos)
+    if (!is.null(v$show_gridlines)) updateCheckboxInput(session, "showGridlines",    value = v$show_gridlines)
+    if (!is.null(v$color_palette)) updateSelectInput(session,   "colorPalette",     selected = v$color_palette)
+    if (!is.null(v$title))          updateTextInput(session,     "chartTitle",       value = v$title)
+    if (!is.null(v$x_label))        updateTextInput(session,     "xLabel",           value = v$x_label)
+    if (!is.null(v$y_label))        updateTextInput(session,     "yLabel",           value = v$y_label)
+    if (!is.null(v$title_size))     updateSliderInput(session,   "titleSize",        value = v$title_size)
+    if (!is.null(v$axis_text_size)) updateSliderInput(session,   "axisTextSize",     value = v$axis_text_size)
+  }
+
+  # Gather all style inputs into a plain list (call inside reactive context)
+  read_style <- function(ct = NULL) {
+    ct <- ct %||% isolate(input$chartType) %||% "Line"
+    list(
+      chart_type     = ct,
+      color_by       = { cb <- isolate(input$colorBy); if (!is.null(cb) && cb != "__none__") cb else NULL },
+      line_color     = isolate(input$lineColor)        %||% "#3a86ff",
+      line_width     = isolate(input$lineWidth)        %||% 1.0,
+      show_points    = isTRUE(isolate(input$showPoints)),
+      point_size     = if (ct == "Line")    isolate(input$linePointSize)    %||% 2.5
+                       else                 isolate(input$scatterPointSize) %||% 2.5,
+      point_alpha    = isolate(input$pointAlpha)       %||% 0.7,
+      point_shape    = as.integer(isolate(input$pointShape) %||% 16L),
+      bar_width      = isolate(input$barWidth)         %||% 0.7,
+      bar_position   = isolate(input$barPosition)      %||% "dodge",
+      bins           = as.integer(isolate(input$histBins) %||% 30L),
+      color_palette  = isolate(input$colorPalette)       %||% "default",
+      smooth         = isTRUE(isolate(input$addSmooth)),
+      smooth_method  = isolate(input$smoothMethod)     %||% "loess",
+      title          = { t <- isolate(input$chartTitle); if (isTruthy(t)) t else NULL },
+      x_label        = { x <- isolate(input$xLabel);    if (isTruthy(x)) x else NULL },
+      y_label        = { y <- isolate(input$yLabel);    if (isTruthy(y)) y else NULL },
+      theme          = isolate(input$chartTheme)        %||% "minimal",
+      legend_pos     = isolate(input$legendPos)         %||% "right",
+      show_gridlines = isTRUE(isolate(input$showGridlines) %||% TRUE),
+      title_size     = as.integer(isolate(input$titleSize)     %||% 14L),
+      axis_text_size = as.integer(isolate(input$axisTextSize)  %||% 11L)
     )
-    log_to_gsheet("llm_code_tweak_prmpted", paste("Prompt:", input$feedbackInput),user_id = user_id)
-    log_to_gsheet("llm_code_tweaked", refined_code,user_id = user_id)
-    new_stack <- c(list(refined_code), undo_stack())
-    undo_stack(head(new_stack, 3))
-    redo_stack(list())
-    undo_counter(length(undo_stack()) - 1)
-    current_code(refined_code)
-    updateTextAreaInput(session, "feedbackInput", value = "")
+  }
+
+  build_state <- function(x_col, y_col = NULL, s) {
+    switch(s$chart_type,
+      "Line" = default_line_state(
+        x_col=x_col, y_col=y_col, color_by=s$color_by,
+        line_color=s$line_color, line_width=s$line_width,
+        show_points=s$show_points, point_size=s$point_size,
+        smooth=s$smooth, smooth_method=s$smooth_method,
+        color_palette=s$color_palette,
+        title=s$title, x_label=s$x_label, y_label=s$y_label,
+        theme=s$theme, legend_pos=s$legend_pos,
+        show_gridlines=s$show_gridlines,
+        title_size=s$title_size, axis_text_size=s$axis_text_size),
+
+      "Scatter" = default_scatter_state(
+        x_col=x_col, y_col=y_col, color_by=s$color_by,
+        line_color=s$line_color, point_size=s$point_size,
+        point_alpha=s$point_alpha, point_shape=s$point_shape,
+        smooth=s$smooth, smooth_method=s$smooth_method,
+        color_palette=s$color_palette,
+        title=s$title, x_label=s$x_label, y_label=s$y_label,
+        theme=s$theme, legend_pos=s$legend_pos,
+        show_gridlines=s$show_gridlines,
+        title_size=s$title_size, axis_text_size=s$axis_text_size),
+
+      "Bar" = default_bar_state(
+        x_col=x_col, y_col=y_col, color_by=s$color_by,
+        line_color=s$line_color, bar_width=s$bar_width, bar_position=s$bar_position,
+        color_palette=s$color_palette,
+        title=s$title, x_label=s$x_label, y_label=s$y_label,
+        theme=s$theme, legend_pos=s$legend_pos,
+        show_gridlines=s$show_gridlines,
+        title_size=s$title_size, axis_text_size=s$axis_text_size),
+
+      "Histogram" = default_hist_state(
+        x_col=x_col, line_color=s$line_color, bins=s$bins,
+        title=s$title, x_label=s$x_label, y_label=s$y_label,
+        theme=s$theme, legend_pos=s$legend_pos,
+        show_gridlines=s$show_gridlines,
+        title_size=s$title_size, axis_text_size=s$axis_text_size)
+    )
+  }
+
+  # Shared rebuild: generate new code and update labels
+  do_rebuild <- function(x_col, y_col, style, reset_labels = FALSE) {
+    if (reset_labels) { style$title <- NULL; style$x_label <- NULL; style$y_label <- NULL }
+    state    <- build_state(x_col, y_col, style)
+    new_code <- state_to_code(state)
+    current_code(new_code)
+    if (reset_labels) {
+      updateTextInput(session, "chartTitle", value = state$title)
+      updateTextInput(session, "xLabel",     value = state$x_label)
+      updateTextInput(session, "yLabel",     value = state$y_label)
+    }
+    new_code
+  }
+
+  # ── Structural observers ─────────────────────────────────────────────────
+
+  # Column / Y column change
+  observeEvent(list(input$lineX, input$lineY), {
+    req(dataset(), input$lineX)
+    ct <- isolate(input$chartType) %||% "Line"
+    y  <- if (ct != "Histogram") { req(input$lineY); input$lineY } else NULL
+    push_undo(current_code())
+    do_rebuild(input$lineX, y, read_style(ct), reset_labels = TRUE)
+    status_text("Chart updated.")
+    log_to_gsheet("column_change", paste(input$lineX, "x", input$lineY %||% ""), user_id)
+  }, ignoreInit = TRUE)
+
+  # Chart type change
+  observeEvent(input$chartType, {
+    req(dataset(), input$lineX)
+    ct <- input$chartType
+    y  <- if (ct != "Histogram") isolate(input$lineY) else NULL
+    push_undo(current_code())
+    do_rebuild(isolate(input$lineX), y, read_style(ct))
+    status_text(paste(ct, "chart selected."))
+    log_to_gsheet("chart_type_change", ct, user_id)
+  }, ignoreInit = TRUE)
+
+  # Color-by group change
+  observeEvent(input$colorBy, {
+    req(dataset(), input$lineX)
+    ct <- isolate(input$chartType) %||% "Line"
+    y  <- if (ct != "Histogram") isolate(input$lineY) else NULL
+    push_undo(current_code())
+    do_rebuild(isolate(input$lineX), y, read_style(ct))
+    status_text("Grouping updated.")
+  }, ignoreInit = TRUE)
+
+  # ── Deterministic style patches ─────────────────────────────────────────
+
+  observeEvent(input$lineColor, {
+    req(nzchar(current_code()))
+    current_code(patch_color(current_code(), input$lineColor))
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$colorPalette, {
+    req(nzchar(current_code()))
+    current_code(patch_palette(current_code(), input$colorPalette))
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$lineWidth, {
+    req(nzchar(current_code()))
+    current_code(patch_line_width(current_code(), input$lineWidth))
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$showPoints, {
+    req(nzchar(current_code()))
+    current_code(patch_show_points(current_code(), input$showPoints,
+                                   isolate(input$lineColor) %||% "#3a86ff",
+                                   isolate(input$linePointSize) %||% 2.5))
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$linePointSize, {
+    req(nzchar(current_code()), isTRUE(input$showPoints))
+    current_code(patch_point_size(current_code(), input$linePointSize))
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$scatterPointSize, {
+    req(nzchar(current_code()), input$chartType == "Scatter")
+    current_code(patch_point_size(current_code(), input$scatterPointSize))
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$pointAlpha, {
+    req(nzchar(current_code()), input$chartType == "Scatter")
+    current_code(patch_alpha(current_code(), input$pointAlpha))
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$pointShape, {
+    req(nzchar(current_code()), input$chartType == "Scatter")
+    current_code(patch_point_shape(current_code(), as.integer(input$pointShape)))
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$barWidth, {
+    req(nzchar(current_code()), input$chartType == "Bar")
+    current_code(patch_bar_width(current_code(), input$barWidth))
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$barPosition, {
+    req(nzchar(current_code()), input$chartType == "Bar")
+    current_code(patch_bar_position(current_code(), input$barPosition))
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$histBins, {
+    req(nzchar(current_code()), input$chartType == "Histogram")
+    current_code(patch_bins(current_code(), input$histBins))
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$addSmooth, {
+    req(nzchar(current_code()))
+    current_code(patch_smooth(current_code(), input$addSmooth,
+                              isolate(input$smoothMethod) %||% "loess"))
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$smoothMethod, {
+    req(nzchar(current_code()), isTRUE(input$addSmooth))
+    current_code(patch_smooth(current_code(), show = TRUE, method = input$smoothMethod))
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$chartTheme, {
+    req(nzchar(current_code()))
+    current_code(patch_theme(current_code(), input$chartTheme))
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$legendPos, {
+    req(nzchar(current_code()))
+    current_code(patch_legend_pos(current_code(), input$legendPos))
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$showGridlines, {
+    req(nzchar(current_code()))
+    current_code(patch_gridlines(current_code(), input$showGridlines))
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$titleSize, {
+    req(nzchar(current_code()))
+    current_code(patch_title_size(current_code(), input$titleSize))
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$axisTextSize, {
+    req(nzchar(current_code()))
+    current_code(patch_axis_text_size(current_code(), input$axisTextSize))
+  }, ignoreInit = TRUE)
+
+  title_d   <- debounce(reactive(input$chartTitle), 600)
+  x_label_d <- debounce(reactive(input$xLabel),      600)
+  y_label_d <- debounce(reactive(input$yLabel),       600)
+
+  observeEvent(title_d(),   { req(nzchar(current_code())); current_code(patch_labs(current_code(), title   = title_d()))   }, ignoreInit = TRUE)
+  observeEvent(x_label_d(), { req(nzchar(current_code())); current_code(patch_labs(current_code(), x_label = x_label_d())) }, ignoreInit = TRUE)
+  observeEvent(y_label_d(), { req(nzchar(current_code())); current_code(patch_labs(current_code(), y_label = y_label_d())) }, ignoreInit = TRUE)
+
+  # ── AI edit ─────────────────────────────────────────────────────────────
+  observeEvent(input$applyAI, {
+    req(nzchar(trimws(input$aiRequest)), nzchar(current_code()), dataset())
+    request <- trimws(input$aiRequest)
+    status_text("Applying AI edit…")
+    push_undo(current_code())
+
+    new_code <- tryCatch(
+      apply_llm_edit(current_code(), request, dataset(), llm),
+      error = function(e) { status_text(paste("AI error:", e$message)); NULL }
+    )
+
+    if (!is.null(new_code) && nzchar(new_code)) {
+      current_code(new_code)
+      sync_ui_from_code(new_code)
+      hist <- c(list(list(request = request, ts = format(Sys.time(), "%H:%M"))), ai_history())
+      ai_history(head(hist, 15))
+      updateTextAreaInput(session, "aiRequest", value = "")
+      status_text(paste0("AI edit applied: “", request, "”"))
+      log_to_gsheet("ai_edit", request, user_id)
+    }
   })
-  
-  observeEvent(input$undo, {
+
+  # ── Undo / Redo ──────────────────────────────────────────────────────────
+  observeEvent(input$undoBtn, {
     stack <- undo_stack()
-    if (length(stack) > 1) {
-      redo_stack(c(list(stack[[1]]), redo_stack()))
-      undo_stack(stack[-1])
-      current_code(undo_stack()[[1]])
-      undo_counter(length(undo_stack()) - 1)
-    }
+    if (!length(stack)) { status_text("Nothing to undo."); return() }
+    redo_stack(c(list(current_code()), redo_stack()))
+    current_code(stack[[1]]); undo_stack(stack[-1])
+    sync_ui_from_code(stack[[1]]); status_text("Undid last change.")
   })
-  
-  observeEvent(input$redo, {
+
+  observeEvent(input$redoBtn, {
     stack <- redo_stack()
-    if (length(stack) > 0) {
-      undo_stack(c(list(stack[[1]]), undo_stack()))
-      redo_stack(stack[-1])
-      current_code(stack[[1]])
-      undo_counter(length(undo_stack()) - 1)
-    }
+    if (!length(stack)) { status_text("Nothing to redo."); return() }
+    push_undo(current_code())
+    current_code(stack[[1]]); redo_stack(stack[-1])
+    sync_ui_from_code(stack[[1]]); status_text("Redid change.")
   })
-  
-  # PLOT RENDERING
+
+  # ── Plot rendering ────────────────────────────────────────────────────────
   output$plot <- renderPlot({
-    req(dataset())
-    code_to_run <- current_code()
-    if (is.null(code_to_run) || code_to_run == "") return(NULL)
-    if (!validate_plot_code(code_to_run)) {
-      stop("Unsafe or invalid code detected. Please revise your input.")
+    code <- current_code()
+    if (!nzchar(code)) {
+      return(ggplot() +
+        annotate("text", x=0.5, y=0.5, label="Load data and select columns to begin",
+                 color="#adb5bd", size=5) + theme_void())
     }
+    if (!validate_plot_code(code)) { status_text("Unsafe code detected."); return(NULL) }
     df <- dataset()
-    expr <- try(parse(text = code_to_run), silent = TRUE)
-    if (inherits(expr, "try-error")) {
-      return(NULL)
-    }
-    val <- try(eval(expr), silent = TRUE)
-    if (inherits(val, "try-error")) {
-      return(NULL)
-    }
-    # If val is a ggplot object, print it:
-    if (inherits(val, "ggplot")) {
-      print(val)
-    }
+    result <- tryCatch({
+      val <- eval(parse(text = code))
+      if (inherits(val, "ggplot")) val else NULL
+    }, error = function(e) { status_text(paste("Render error:", conditionMessage(e))); NULL })
+    if (is.null(result)) return(NULL)
+    print(result)
   })
-  
-  # CODE DISPLAY 
-  output$code_output <- renderText({
-    current_code()
-  })
-  
-  output$undo_counter <- renderText({
-    paste(undo_counter(), "undos available")
-  })
-  
-  output$feedback_history <- renderText({
-    feedback_history()
+
+  output$statusMsg <- renderText(status_text())
+
+  output$aiHistory <- renderUI({
+    hist <- ai_history()
+    if (!length(hist)) return(div(style="font-size:11px;color:#adb5bd;", "No AI edits yet."))
+    lapply(hist, function(h)
+      div(class="ai-item", span(style="color:#6c757d;margin-right:6px;", h$ts), h$request))
   })
 }
 
