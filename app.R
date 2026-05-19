@@ -7,6 +7,10 @@ library(stringr)
 library(ellmer)
 library(here)
 library(tibble)
+library(showtext)
+
+font_add_google("Inter", "Inter")
+showtext_auto()
 
 source("R/semantic_state.R")
 source("R/llm_helpers.R")
@@ -105,7 +109,10 @@ ui <- fluidPage(
         plotOutput("plot", height = "470px"),
         div(class = "undo-row",
           actionButton("undoBtn", "↩ Undo", class = "btn btn-outline-secondary btn-sm"),
-          actionButton("redoBtn", "↪ Redo", class = "btn btn-outline-secondary btn-sm")
+          actionButton("redoBtn", "↪ Redo", class = "btn btn-outline-secondary btn-sm"),
+          downloadButton("downloadPlot", "↓ PNG",
+                         class = "btn btn-outline-secondary btn-sm",
+                         style = "margin-left: auto;")
         ),
         div(class = "status-bar", textOutput("statusMsg", inline = TRUE))
       )
@@ -127,7 +134,7 @@ ui <- fluidPage(
                 div(class = "ctrl-row",
                   tags$label("Fill / Line color",
                     style = "font-size:12px; font-weight:500; color:#343a40; display:block; margin-bottom:4px;"),
-                  tags$input(id = "lineColor", type = "color", value = "#3a86ff")
+                  tags$input(id = "lineColor", type = "color", value = "#2D6A9F")
                 )
               ),
               conditionalPanel(
@@ -169,7 +176,7 @@ ui <- fluidPage(
               conditionalPanel("input.chartType == 'Line'",
                 div(class = "panel-label", "Line"),
                 div(class = "ctrl-row",
-                  sliderInput("lineWidth", "Width", 0.3, 4, 1.0, 0.1, ticks = FALSE)
+                  sliderInput("lineWidth", "Width", 0.3, 4, 1.2, 0.1, ticks = FALSE)
                 ),
                 hr(class = "thin"),
                 div(class = "panel-label", "Points"),
@@ -190,14 +197,14 @@ ui <- fluidPage(
                   sliderInput("scatterPointSize", "Size",    0.5, 8,   2.5, 0.5,  ticks = FALSE)
                 ),
                 div(class = "ctrl-row",
-                  sliderInput("pointAlpha",       "Opacity", 0.05, 1.0, 0.7, 0.05, ticks = FALSE)
+                  sliderInput("pointAlpha",       "Opacity", 0.05, 1.0, 0.65, 0.05, ticks = FALSE)
                 ),
                 div(class = "ctrl-row",
                   selectInput("pointShape", "Shape",
-                              choices = c("● Filled circle" = 16, "○ Open circle" = 1,
-                                          "■ Filled square" = 15, "▲ Triangle" = 17,
-                                          "◆ Diamond" = 18),
-                              selected = 16)
+                              choices = c("● Filled circle (stroke)" = 21, "● Filled circle" = 16,
+                                          "○ Open circle" = 1, "■ Filled square" = 15,
+                                          "▲ Triangle" = 17, "◆ Diamond" = 18),
+                              selected = 21)
                 )
               ),
 
@@ -243,10 +250,10 @@ ui <- fluidPage(
               div(class = "panel-label", "Theme"),
               div(class = "ctrl-row",
                 selectInput("chartTheme", NULL,
-                            choices = c("Minimal" = "minimal", "Classic" = "classic",
-                                        "Black & White" = "bw", "Light" = "light",
-                                        "Dark" = "dark"),
-                            selected = "minimal")
+                            choices = c("Chart Studio" = "chart_studio", "Minimal" = "minimal",
+                                        "Classic" = "classic", "Black & White" = "bw",
+                                        "Light" = "light", "Dark" = "dark"),
+                            selected = "chart_studio")
               ),
               div(class = "ctrl-row",
                 selectInput("legendPos", "Legend",
@@ -270,10 +277,13 @@ ui <- fluidPage(
               hr(class = "thin"),
               div(class = "panel-label", "Sizes"),
               div(class = "ctrl-row",
-                sliderInput("titleSize",    "Title",     8, 24, 14, 1, ticks = FALSE)
+                sliderInput("titleSize",      "Title",        8, 28, 18, 1, ticks = FALSE)
               ),
               div(class = "ctrl-row",
-                sliderInput("axisTextSize", "Axis text", 6, 18, 11, 1, ticks = FALSE)
+                sliderInput("axisTitleSize",  "Axis labels",  6, 22, 14, 1, ticks = FALSE)
+              ),
+              div(class = "ctrl-row",
+                sliderInput("axisTextSize",   "Axis values",  6, 20, 13, 1, ticks = FALSE)
               )
             )
           ),
@@ -387,8 +397,9 @@ server <- function(input, output, session) {
     if (!is.null(v$title))          updateTextInput(session,     "chartTitle",       value = v$title)
     if (!is.null(v$x_label))        updateTextInput(session,     "xLabel",           value = v$x_label)
     if (!is.null(v$y_label))        updateTextInput(session,     "yLabel",           value = v$y_label)
-    if (!is.null(v$title_size))     updateSliderInput(session,   "titleSize",        value = v$title_size)
-    if (!is.null(v$axis_text_size)) updateSliderInput(session,   "axisTextSize",     value = v$axis_text_size)
+    if (!is.null(v$title_size))      updateSliderInput(session,   "titleSize",        value = v$title_size)
+    if (!is.null(v$axis_text_size))  updateSliderInput(session,   "axisTextSize",     value = v$axis_text_size)
+    if (!is.null(v$axis_title_size)) updateSliderInput(session,   "axisTitleSize",    value = v$axis_title_size)
   }
 
   # Gather all style inputs into a plain list (call inside reactive context)
@@ -397,13 +408,13 @@ server <- function(input, output, session) {
     list(
       chart_type     = ct,
       color_by       = { cb <- isolate(input$colorBy); if (!is.null(cb) && cb != "__none__") cb else NULL },
-      line_color     = isolate(input$lineColor)        %||% "#3a86ff",
-      line_width     = isolate(input$lineWidth)        %||% 1.0,
+      line_color     = isolate(input$lineColor)        %||% "#2D6A9F",
+      line_width     = isolate(input$lineWidth)        %||% 1.2,
       show_points    = isTRUE(isolate(input$showPoints)),
       point_size     = if (ct == "Line")    isolate(input$linePointSize)    %||% 2.5
                        else                 isolate(input$scatterPointSize) %||% 2.5,
-      point_alpha    = isolate(input$pointAlpha)       %||% 0.7,
-      point_shape    = as.integer(isolate(input$pointShape) %||% 16L),
+      point_alpha    = isolate(input$pointAlpha)       %||% 0.65,
+      point_shape    = as.integer(isolate(input$pointShape) %||% 21L),
       bar_width      = isolate(input$barWidth)         %||% 0.7,
       bar_position   = isolate(input$barPosition)      %||% "dodge",
       bins           = as.integer(isolate(input$histBins) %||% 30L),
@@ -413,11 +424,12 @@ server <- function(input, output, session) {
       title          = { t <- isolate(input$chartTitle); if (isTruthy(t)) t else NULL },
       x_label        = { x <- isolate(input$xLabel);    if (isTruthy(x)) x else NULL },
       y_label        = { y <- isolate(input$yLabel);    if (isTruthy(y)) y else NULL },
-      theme          = isolate(input$chartTheme)        %||% "minimal",
+      theme          = isolate(input$chartTheme)        %||% "chart_studio",
       legend_pos     = isolate(input$legendPos)         %||% "right",
       show_gridlines = isTRUE(isolate(input$showGridlines) %||% TRUE),
-      title_size     = as.integer(isolate(input$titleSize)     %||% 14L),
-      axis_text_size = as.integer(isolate(input$axisTextSize)  %||% 11L)
+      title_size      = as.integer(isolate(input$titleSize)      %||% 18L),
+      axis_text_size  = as.integer(isolate(input$axisTextSize)  %||% 13L),
+      axis_title_size = as.integer(isolate(input$axisTitleSize) %||% 14L)
     )
   }
 
@@ -432,7 +444,7 @@ server <- function(input, output, session) {
         title=s$title, x_label=s$x_label, y_label=s$y_label,
         theme=s$theme, legend_pos=s$legend_pos,
         show_gridlines=s$show_gridlines,
-        title_size=s$title_size, axis_text_size=s$axis_text_size),
+        title_size=s$title_size, axis_text_size=s$axis_text_size, axis_title_size=s$axis_title_size),
 
       "Scatter" = default_scatter_state(
         x_col=x_col, y_col=y_col, color_by=s$color_by,
@@ -443,7 +455,7 @@ server <- function(input, output, session) {
         title=s$title, x_label=s$x_label, y_label=s$y_label,
         theme=s$theme, legend_pos=s$legend_pos,
         show_gridlines=s$show_gridlines,
-        title_size=s$title_size, axis_text_size=s$axis_text_size),
+        title_size=s$title_size, axis_text_size=s$axis_text_size, axis_title_size=s$axis_title_size),
 
       "Bar" = default_bar_state(
         x_col=x_col, y_col=y_col, color_by=s$color_by,
@@ -452,14 +464,14 @@ server <- function(input, output, session) {
         title=s$title, x_label=s$x_label, y_label=s$y_label,
         theme=s$theme, legend_pos=s$legend_pos,
         show_gridlines=s$show_gridlines,
-        title_size=s$title_size, axis_text_size=s$axis_text_size),
+        title_size=s$title_size, axis_text_size=s$axis_text_size, axis_title_size=s$axis_title_size),
 
       "Histogram" = default_hist_state(
         x_col=x_col, line_color=s$line_color, bins=s$bins,
         title=s$title, x_label=s$x_label, y_label=s$y_label,
         theme=s$theme, legend_pos=s$legend_pos,
         show_gridlines=s$show_gridlines,
-        title_size=s$title_size, axis_text_size=s$axis_text_size)
+        title_size=s$title_size, axis_text_size=s$axis_text_size, axis_title_size=s$axis_title_size)
     )
   }
 
@@ -606,6 +618,11 @@ server <- function(input, output, session) {
     current_code(patch_axis_text_size(current_code(), input$axisTextSize))
   }, ignoreInit = TRUE)
 
+  observeEvent(input$axisTitleSize, {
+    req(nzchar(current_code()))
+    current_code(patch_axis_title_size(current_code(), input$axisTitleSize))
+  }, ignoreInit = TRUE)
+
   title_d   <- debounce(reactive(input$chartTitle), 600)
   x_label_d <- debounce(reactive(input$xLabel),      600)
   y_label_d <- debounce(reactive(input$yLabel),       600)
@@ -670,7 +687,21 @@ server <- function(input, output, session) {
     }, error = function(e) { status_text(paste("Render error:", conditionMessage(e))); NULL })
     if (is.null(result)) return(NULL)
     print(result)
-  })
+  }, res = 120)
+
+  output$downloadPlot <- downloadHandler(
+    filename = function() paste0("chart-", format(Sys.time(), "%Y%m%d-%H%M%S"), ".png"),
+    content = function(file) {
+      code <- isolate(current_code())
+      if (!nzchar(code) || !validate_plot_code(code)) return()
+      df <- isolate(dataset())
+      p  <- tryCatch(eval(parse(text = code)), error = function(e) NULL)
+      if (!inherits(p, "ggplot")) return()
+      showtext_opts(dpi = 150)
+      ggsave(file, plot = p, width = 10, height = 7, dpi = 150, bg = "#FAFAFA")
+      showtext_opts(dpi = 96)
+    }
+  )
 
   output$statusMsg <- renderText(status_text())
 

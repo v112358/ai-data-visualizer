@@ -8,7 +8,7 @@ library(here)
 source(here("keys", "gemini.R"))
 
 create_llm_object <- function() {
-  chat_gemini(
+  chat_google_gemini(
     system_prompt =
       "You are an expert ggplot2 code editor embedded in a professional chart editor.
 Your only job is to apply LOCALIZED, SURGICAL modifications to existing ggplot2 R code.
@@ -24,7 +24,8 @@ Hard rules:
 - For color values: use valid R color names or hex codes (e.g. '#e63946' or 'tomato').
 - If the request is ambiguous, make the most visually sensible change.
 - Use linewidth (not size) for line thickness in ggplot2 >= 3.4.",
-    api_key = GEMINI_KEY
+    api_key = GEMINI_KEY,
+    model = 'gemini-2.5-flash'
   )
 }
 
